@@ -89,11 +89,10 @@ export interface Model { id: string; name: string; ds: string; ic: string; effor
 // advanced user may still type `/model <id>` for a hidden/provider model; the
 // ordinary model sheet stays limited to curated choices.
 export const MODELS: Model[] = [
-  { id: "claude-opus-5[1m]", name: "Opus 5", ds: "最强推理 · 1M 上下文", ic: "crown" },
-  { id: "claude-mythos-5-1", name: "Mythos 5.1", ds: "限定访问 · 1M 上下文", ic: "gem" },
-  { id: "claude-sonnet-5", name: "Sonnet 5", ds: "均衡 · 更快", ic: "balance" },
-  { id: "claude-haiku-4-5", name: "Haiku 4.5", ds: "轻量 · 极速", ic: "bolt" },
-  { id: "claude-fable-5-1", name: "Fable 5.1", ds: "高能力 · 1M 上下文", ic: "book" },
+  { id: "gm51model", name: "gm51model", ds: "\u6620\u5c04 Opus \u00b7 \u6700\u5f3a\u63a8\u7406", ic: "crown" },
+  { id: "dashscope_qmodel", name: "dashscope_qmodel", ds: "\u6620\u5c04 Sonnet \u00b7 \u5747\u8861\u66f4\u5feb", ic: "balance" },
+  { id: "qmodel_latest", name: "qmodel_latest", ds: "\u6620\u5c04 Fable \u00b7 \u6700\u65b0", ic: "book" },
+  { id: "kmodel", name: "kmodel", ds: "\u6620\u5c04 Haiku \u00b7 \u8f7b\u91cf\u6781\u901f", ic: "bolt" },
 ];
 
 // Reasoning effort (思考强度). `name` is the RAW level id on purpose: it's what
