@@ -374,11 +374,51 @@ async def _read_json_limited(req: Request, max_bytes: int):
     return json.loads(body)
 
 
+
+# --- local SSO patch (TinyAuth forward-auth via local Caddy) ---
+_SSO_HEADER = "x-ccremote-sso"
+def _sso_token():
+    import os
+    return os.environ.get("CC_REMOTE_SSO_TOKEN", "").strip()
+
+def _sso_claims(req):
+    # Trust a secret header injected by Caddy AFTER the TinyAuth guard.
+    # header_up overrides any client-supplied value; direct tailnet callers
+    # don't know the secret, so this cannot be forged. (local patch)
+    import hmac
+    want = _sso_token()
+    if not want:
+        return None
+    got = ""
+    try:
+        got = req.headers.get(_SSO_HEADER, "") or ""
+    except Exception:
+        got = ""
+    if not got or not hmac.compare_digest(got.strip(), want):
+        return None
+    user = req.headers.get("remote-user", "").strip() or "tinyauth-sso"
+    # stable per 12h window: all concurrent connections share ONE registry
+    # entry; per-call expires_at caused revoke/register wars that killed
+    # sibling websockets with SESSION_REVOKED.
+    exp = int(time.time() // 43200) * 43200 + 86400
+    return SessionClaims(expires_at=exp, jti="sso-" + user, subject=user, machines=("*",))
+# --- end local SSO patch ---
+
 async def _active_claims(
     req: Request | WebSocket,
     cfg: RelayConfig,
     sessions: SessionRegistry,
 ) -> SessionClaims | None:
+    sso = _sso_claims(req)
+    if sso is not None:
+        # keep the process-local registry in sync so sessions.active()
+        # callbacks (viewer bridge, push) accept SSO sessions too;
+        # register only when missing/expired-rolled to avoid revoking
+        # sibling live connections.
+        if not await sessions.active(sso):
+            await sessions.revoke(sso.jti)
+            await sessions.register(sso)
+        return sso
     token = req.cookies.get(main_cookie_name(cfg, req), "")
     claims = session_token_claims(token, cfg.session_secret)
     if (
@@ -806,6 +846,43 @@ def create_app(
 
     @app.get("/api/session")
     async def session_status(req: Request) -> JSONResponse:
+        sso = _sso_claims(req)
+        if sso is not None:
+            # local SSO patch v3: mint a REAL session cookie (equivalent to
+            # the user submitting the login form) so every downstream check
+            # (ws cookie auth, session registry, viewer bridge, push) runs
+            # on the fully native path.
+            token = req.cookies.get(main_cookie_name(cfg, req), "")
+            claims = session_token_claims(token, cfg.session_secret)
+            if (
+                claims is None
+                or claims.expires_at <= time.time()
+                or not await sessions.active(claims)
+            ):
+                token, exp = make_session_token(
+                    cfg.session_secret,
+                    cfg.session_ttl_seconds,
+                    subject=sso.subject,
+                    machines=("*",),
+                )
+                claims = session_token_claims(token, cfg.session_secret)
+                assert claims is not None
+                await sessions.register(claims)
+            response = JSONResponse(
+                {"ok": True, "exp": claims.expires_at,
+                 "username": claims.subject},
+                headers={"Cache-Control": "no-store"},
+            )
+            response.set_cookie(
+                main_cookie_name(cfg, req),
+                token,
+                max_age=cfg.session_ttl_seconds,
+                path="/",
+                secure=_request_cookie_secure(req),
+                httponly=True,
+                samesite="strict",
+            )
+            return response
         token = req.cookies.get(main_cookie_name(cfg, req), "")
         claims = session_token_claims(token, cfg.session_secret)
         if (
@@ -1075,6 +1152,17 @@ def create_app(
             if wrapper_scope is not None:
                 role = "wrapper"
         claims: Optional[SessionClaims] = None
+        if role is None:
+            sso = _sso_claims(websocket)  # local SSO patch
+            if sso is not None:
+                claims = sso
+                role = "client"
+                # SSO sessions are not in the process-local registry (no
+                # login call). Register only when not already active, or
+                # every new ws would revoke the previous one.
+                if not await sessions.active(sso):
+                    await sessions.revoke(sso.jti)
+                    await sessions.register(sso)
         if role is None:
             token = websocket.cookies.get(main_cookie_name(cfg, websocket), "")
             origin = websocket.headers.get("origin", "")
