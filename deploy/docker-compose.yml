@@ -28,6 +28,8 @@ services:
     # the HTTPS PUBLIC_ORIGIN. With host networking the relay binds loopback
     # only (RELAY_HOST=127.0.0.1), which the host nginx/Caddy reaches directly.
     # Linux hosts only; the `ports:` mapping is ignored under host networking.
+    # To use a `ports:` mapping anyway, add the bridge gateway to the relay's
+    # FORWARDED_ALLOW_IPS instead (see env.relay.docker.example).
     network_mode: host
     env_file:
       - env.relay
